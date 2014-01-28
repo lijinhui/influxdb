@@ -5,7 +5,7 @@ package parser
 import "C"
 
 import (
-	"common"
+	"bytes"
 	"fmt"
 	"math"
 	"reflect"
@@ -21,110 +21,8 @@ type From struct {
 
 type Operation int
 
-type ValueType int
-
-const (
-	ValueRegex        ValueType = C.VALUE_REGEX
-	ValueInt                    = C.VALUE_INT
-	ValueFloat                  = C.VALUE_FLOAT
-	ValueString                 = C.VALUE_STRING
-	ValueTableName              = C.VALUE_TABLE_NAME
-	ValueSimpleName             = C.VALUE_SIMPLE_NAME
-	ValueDuration               = C.VALUE_DURATION
-	ValueWildcard               = C.VALUE_WILDCARD
-	ValueFunctionCall           = C.VALUE_FUNCTION_CALL
-	ValueExpression             = C.VALUE_EXPRESSION
-)
-
-type Value struct {
-	Name          string
-	Type          ValueType
-	Elems         []*Value
-	compiledRegex *regexp.Regexp
-}
-
-func (self *Value) IsFunctionCall() bool {
-	return self.Type == ValueFunctionCall
-}
-
-func (self *Value) GetCompiledRegex() (*regexp.Regexp, bool) {
-	return self.compiledRegex, self.Type == ValueRegex
-}
-
-type FromClauseType int
-
-const (
-	FromClauseArray     FromClauseType = C.FROM_ARRAY
-	FromClauseMerge     FromClauseType = C.FROM_MERGE
-	FromClauseInnerJoin FromClauseType = C.FROM_INNER_JOIN
-)
-
-type TableName struct {
-	Name  *Value
-	Alias string
-}
-
-func (self *TableName) GetAlias() string {
-	if self.Alias != "" {
-		return self.Alias
-	}
-	return self.Name.Name
-}
-
-type FromClause struct {
-	Type  FromClauseType
-	Names []*TableName
-}
-
 type IntoClause struct {
 	Target *Value
-}
-
-type GroupByClause struct {
-	FillWithZero bool
-	FillValue    *Value
-	Elems        []*Value
-}
-
-func (self GroupByClause) GetGroupByTime() (*time.Duration, error) {
-	for _, groupBy := range self.Elems {
-		if groupBy.IsFunctionCall() {
-			// TODO: check the number of arguments and return an error
-			if len(groupBy.Elems) != 1 {
-				return nil, common.NewQueryError(common.WrongNumberOfArguments, "time function only accepts one argument")
-			}
-			// TODO: check the function name
-			// TODO: error checking
-			arg := groupBy.Elems[0].Name
-			duration, err := time.ParseDuration(arg)
-			if err != nil {
-				return nil, common.NewQueryError(common.InvalidArgument, fmt.Sprintf("invalid argument %s to the time function", arg))
-			}
-			return &duration, nil
-		}
-	}
-	return nil, nil
-}
-
-type WhereCondition struct {
-	isBooleanExpression bool
-	Left                interface{}
-	Operation           string
-	Right               *WhereCondition
-}
-
-func (self *WhereCondition) GetBoolExpression() (*Value, bool) {
-	if self.isBooleanExpression {
-		return self.Left.(*Value), true
-	}
-	return nil, false
-}
-
-func (self *WhereCondition) GetLeftWhereCondition() (*WhereCondition, bool) {
-	if !self.isBooleanExpression {
-		return self.Left.(*WhereCondition), true
-	}
-	return nil, false
 }
 
 type BasicQuery struct {
@@ -209,6 +107,34 @@ func (self *BasicQuery) GetQueryString() string {
 
 func (self *SelectQuery) GetColumnNames() []*Value {
 	return self.ColumnNames
+}
+
+func (self *SelectQuery) GetQueryString() string {
+	buffer := bytes.NewBufferString("")
+	fmt.Fprintf(buffer, "select ")
+
+	for _, column := range self.ColumnNames {
+		fmt.Fprintf(buffer, "%s ", column.GetString())
+	}
+
+	fmt.Fprintf(buffer, "from %s", self.FromClause.GetString())
+
+	if self.GetWhereCondition() != nil {
+		fmt.Fprintf(buffer, " where %s", self.GetWhereCondition().GetString())
+	}
+	if self.GetGroupByClause() != nil && len(self.GetGroupByClause().Elems) > 0 {
+		fmt.Fprintf(buffer, " group by %s", self.GetGroupByClause().GetString())
+	}
+
+	if self.Limit > 0 {
+		fmt.Fprintf(buffer, " limit %d", self.Limit)
+	}
+
+	if self.Ascending {
+		fmt.Fprintf(buffer, " order asc")
+	}
+
+	return buffer.String()
 }
 
 func (self *SelectQuery) IsSinglePointQuery() bool {

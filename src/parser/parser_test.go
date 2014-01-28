@@ -40,8 +40,6 @@ func (self *QueryParserSuite) TestParseBasicSelectQuery(c *C) {
 		q, err := ParseSelectQuery(query)
 		c.Assert(err, IsNil)
 
-		c.Assert(q.GetQueryString(), Equals, query)
-
 		c.Assert(q.GetColumnNames(), DeepEquals, ToValueArray("value"))
 		w := q.GetWhereCondition()
 
@@ -55,6 +53,14 @@ func (self *QueryParserSuite) TestParseBasicSelectQuery(c *C) {
 		c.Assert(boolExpression.Name, Equals, "=")
 		c.Assert(rightValue.Name, Equals, "5")
 	}
+}
+
+func (self *QueryParserSuite) TestGetQueryString(c *C) {
+	query := "select value from t where c = '5'"
+	q, err := ParseQuery(query)
+	c.Assert(err, IsNil)
+	c.Assert(q, HasLen, 1)
+	c.Assert(q[0].GetQueryString(), Equals, query)
 }
 
 func (self *QueryParserSuite) TestParseDeleteQueryWithEndTime(c *C) {
