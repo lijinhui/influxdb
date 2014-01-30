@@ -35,7 +35,6 @@ type SelectDeleteCommonQuery struct {
 	BasicQuery
 	FromClause *FromClause
 	Condition  *WhereCondition
-	endTimeSet bool
 }
 
 type SelectQuery struct {
@@ -120,7 +119,7 @@ func (self *SelectQuery) GetQueryString() string {
 	fmt.Fprintf(buffer, "from %s", self.FromClause.GetString())
 
 	if self.GetWhereCondition() != nil {
-		fmt.Fprintf(buffer, " where %s", self.GetWhereCondition().GetString())
+		fmt.Fprintf(buffer, " where %s", self.GetWhereConditionWithTime().GetString())
 	}
 	if self.GetGroupByClause() != nil && len(self.GetGroupByClause().Elems) > 0 {
 		fmt.Fprintf(buffer, " group by %s", self.GetGroupByClause().GetString())
@@ -371,6 +370,42 @@ func (self *SelectDeleteCommonQuery) GetWhereCondition() *WhereCondition {
 	return self.Condition
 }
 
+func (self *SelectDeleteCommonQuery) GetWhereConditionWithTime() *WhereCondition {
+	return &WhereCondition{
+		isBooleanExpression: false,
+		Left:                self.Condition,
+		Right: &WhereCondition{
+			isBooleanExpression: false,
+			Operation:           "AND",
+			Left: &WhereCondition{
+				isBooleanExpression: true,
+				Left: &Value{
+					Name: "<",
+					Type: ValueExpression,
+					Elems: []*Value{
+						&Value{Name: "time", Type: ValueSimpleName},
+						&Value{Name: strconv.FormatInt(self.BasicQuery.endTime.UnixNano()/1000.0, 10), Type: ValueInt},
+					},
+				},
+			},
+			Right: &WhereCondition{
+				isBooleanExpression: true,
+				Left: &Value{
+					Name: ">",
+					Type: ValueExpression,
+					Elems: []*Value{
+						&Value{Name: "time", Type: ValueSimpleName},
+						&Value{Name: strconv.FormatInt(self.BasicQuery.startTime.UnixNano(), 10), Type: ValueInt},
+					},
+				},
+			},
+		},
+		Operation: "AND",
+	}
+
+	return self.Condition
+}
+
 func (self *SelectQuery) GetGroupByClause() *GroupByClause {
 	return self.groupByClause
 }
@@ -458,7 +493,7 @@ func parseSelectDeleteCommonQuery(queryString string, fromClause *C.from_clause,
 		BasicQuery: BasicQuery{
 			queryString: queryString,
 			startTime:   time.Unix(0, 0),
-			endTime:     time.Now(),
+			endTime:     time.Now().UTC(),
 		},
 	}
 
@@ -485,9 +520,7 @@ func parseSelectDeleteCommonQuery(queryString string, fromClause *C.from_clause,
 		return goQuery, err
 	}
 
-	goQuery.endTimeSet = endTime.Unix() > 0
-
-	if goQuery.endTimeSet {
+	if endTime.Unix() > 0 {
 		goQuery.endTime = endTime
 	}
 

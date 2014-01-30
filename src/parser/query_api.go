@@ -14,7 +14,7 @@ import (
 // this file provides the high level api of the query object
 
 var (
-	ZERO_TIME = time.Unix(0, 0)
+	ZERO_TIME = time.Unix(0, 0).UTC()
 )
 
 func uniq(slice []string) []string {
@@ -208,11 +208,28 @@ func parseTimeString(t string) (time.Time, error) {
 	return time.Parse("2006-01-02", t)
 }
 
+func parseTimeWithoutSuffix(value string) (int64, error) {
+	var err error
+	var f float64
+	var i int64
+	if strings.Contains(value, ".") {
+		f, err = strconv.ParseFloat(value, 64)
+		i = int64(f)
+	} else {
+		fmt.Printf("here %v\n", value)
+		i, err = strconv.ParseInt(value, 10, 64)
+	}
+	if err != nil {
+		return 0, err
+	}
+	return i, nil
+}
+
 // parse time expressions, e.g. now() - 1d
 func parseTime(value *Value) (int64, error) {
 	if value.Type != ValueExpression {
 		if value.IsFunctionCall() && value.Name == "now" {
-			return time.Now().UnixNano(), nil
+			return time.Now().UTC().UnixNano(), nil
 		}
 
 		if value.IsFunctionCall() {
@@ -225,6 +242,11 @@ func parseTime(value *Value) (int64, error) {
 		}
 
 		name := value.Name
+
+		lastChar := rune(name[len(name)-1])
+		if unicode.IsDigit(lastChar) || lastChar == '.' {
+			return parseTimeWithoutSuffix(name)
+		}
 
 		parsedFloat, err := strconv.ParseFloat(name[:len(name)-1], 64)
 		if err != nil {
@@ -246,16 +268,7 @@ func parseTime(value *Value) (int64, error) {
 			return int64(parsedFloat * 7 * 24 * float64(time.Hour)), nil
 		}
 
-		lastChar := name[len(name)-1]
-		if !unicode.IsDigit(rune(lastChar)) && lastChar != '.' {
-			return 0, fmt.Errorf("Invalid character '%c'", lastChar)
-		}
-
-		if name[len(name)-2] != '.' {
-			extraDigit := float64(lastChar - '0')
-			parsedFloat = parsedFloat*10 + extraDigit
-		}
-		return int64(parsedFloat), nil
+		return 0, fmt.Errorf("Invalid time string %s", name)
 	}
 
 	leftValue, err := parseTime(value.Elems[0])
@@ -323,21 +336,7 @@ func isNumericValue(value *Value) bool {
 }
 
 func (self *SelectDeleteCommonQuery) GetQueryStringWithTimeCondition() string {
-	queryString := self.GetQueryString()
-
-	if self.endTimeSet {
-		return queryString
-	}
-
-	t := common.TimeToMicroseconds(self.GetEndTime())
-	timeStr := strconv.FormatInt(t, 10)
-
-	condition := self.GetWhereCondition()
-	if condition == nil {
-		return queryString + " where time < " + timeStr + "u"
-	}
-
-	return queryString + " and time < " + timeStr + "u"
+	return self.GetQueryString()
 }
 
 func (self *SelectDeleteCommonQuery) GetQueryStringForContinuousQuery(start, end time.Time) string {

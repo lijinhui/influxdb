@@ -56,11 +56,23 @@ func (self *QueryParserSuite) TestParseBasicSelectQuery(c *C) {
 }
 
 func (self *QueryParserSuite) TestGetQueryString(c *C) {
-	query := "select value from t where c = '5'"
-	q, err := ParseQuery(query)
-	c.Assert(err, IsNil)
-	c.Assert(q, HasLen, 1)
-	c.Assert(q[0].GetQueryString(), Equals, query)
+	for _, query := range []string{
+		"select value from t where c = '5'",
+	} {
+		expectedQuery, err := ParseQuery(query)
+		c.Assert(err, IsNil)
+		c.Assert(expectedQuery, HasLen, 1)
+		fmt.Printf("time: %#v, time: %x\n", expectedQuery[0].SelectQuery.GetEndTime(), expectedQuery[0].SelectQuery.GetEndTime().Nanosecond())
+		queryString := expectedQuery[0].GetQueryString()
+		actualQuery, err := ParseQuery(queryString)
+		c.Assert(err, IsNil)
+		c.Assert(actualQuery, HasLen, 1)
+		actualQuery[0].SelectQuery.SelectDeleteCommonQuery.BasicQuery.queryString = ""
+		expectedQuery[0].SelectQuery.SelectDeleteCommonQuery.BasicQuery.queryString = ""
+		fmt.Printf("actual: %#v\nexptected: %#v\n", actualQuery[0].SelectQuery, expectedQuery[0].SelectQuery)
+		fmt.Printf("time: %#v, time: %#v\n", actualQuery[0].SelectQuery.GetEndTime(), expectedQuery[0].SelectQuery.GetEndTime())
+		c.Assert(actualQuery, DeepEquals, expectedQuery)
+	}
 }
 
 func (self *QueryParserSuite) TestParseDeleteQueryWithEndTime(c *C) {
