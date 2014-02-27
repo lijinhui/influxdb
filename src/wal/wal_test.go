@@ -6,6 +6,7 @@ import (
 	"configuration"
 	"fmt"
 	. "launchpad.net/gocheck"
+	"math"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -251,6 +252,28 @@ func (_ *WalSuite) TestReplay(c *C) {
 	c.Assert(requests[0].Series.Points, HasLen, 3)
 	c.Assert(*requests[0].RequestNumber, Equals, uint32(3))
 	c.Assert(err, IsNil)
+}
+
+// TODO: test roll over with multiple log files (this will test
+// sorting of the log files)
+func (_ *WalSuite) TestRequestNumberRollOver(c *C) {
+	wal := newWal(c)
+	firstRequestNumber := uint32(math.MaxUint32 - 10)
+	wal.logFiles[0].state.LargestRequestNumber = firstRequestNumber
+	var i uint32
+	for i = 0; i < 20; i++ {
+		req := generateRequest(2)
+		n, err := wal.AssignSequenceNumbersAndLog(req, &MockShard{id: 1})
+		c.Assert(err, IsNil)
+		c.Assert(n, Equals, firstRequestNumber+i+1)
+	}
+	wal.Close()
+	requests := []*protocol.Request{}
+	wal.RecoverServerFromRequestNumber(firstRequestNumber, []uint32{1}, func(req *protocol.Request, shardId uint32) error {
+		requests = append(requests, req)
+		return nil
+	})
+	c.Assert(requests, HasLen, 20)
 }
 
 func (_ *WalSuite) TestRecoveryFromCrash(c *C) {

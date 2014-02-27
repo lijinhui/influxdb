@@ -123,7 +123,7 @@ func (self *log) recover() error {
 	stopChan := make(chan struct{})
 
 	go func() {
-		self.replayFromFileLocation(self.file, map[uint32]struct{}{}, 0, replayChan, stopChan)
+		self.replayFromFileLocation(self.file, map[uint32]struct{}{}, replayChan, stopChan)
 	}()
 
 	for {
@@ -256,24 +256,61 @@ func (self *log) replayFromRequestNumber(shardIds []uint32, requestNumber uint32
 		for _, shardId := range shardIds {
 			shardIdsSet[shardId] = struct{}{}
 		}
-		self.replayFromFileLocation(file, shardIdsSet, requestNumber, replayChan, stopChan)
+		if err := self.skipToRequest(file, requestNumber); err != nil {
+			sendOrStop(newErrorReplayRequest(err), replayChan, stopChan)
+			return
+		}
+		self.replayFromFileLocation(file, shardIdsSet, replayChan, stopChan)
 	}()
 	return replayChan, stopChan
 }
 
+func (self *log) getNextHeader(file *os.File) (int, *entryHeader, error) {
+	hdr := &entryHeader{}
+	numberOfBytes, err := hdr.Read(file)
+	if err == io.EOF {
+		return 0, nil, nil
+	}
+	return numberOfBytes, hdr, err
+}
+
+func (self *log) skipRequest(file *os.File, hdr *entryHeader) (err error) {
+	_, err = file.Seek(int64(hdr.length), os.SEEK_CUR)
+	return
+}
+
+func (self *log) skipToRequest(file *os.File, requestNumber uint32) error {
+	for {
+		n, hdr, err := self.getNextHeader(file)
+		if n == 0 {
+			// EOF
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if hdr.requestNumber < requestNumber {
+			if err := self.skipRequest(file, hdr); err != nil {
+				return err
+			}
+			continue
+		}
+		// seek back to the beginning of the request header
+		_, err = file.Seek(int64(-n), os.SEEK_CUR)
+		return err
+	}
+}
+
 func (self *log) replayFromFileLocation(file *os.File,
 	shardIdsSet map[uint32]struct{},
-	requestNumber uint32,
 	replayChan chan *replayRequest,
 	stopChan chan struct{}) {
 
 	defer func() { close(replayChan) }()
 	for {
-		hdr := &entryHeader{}
-		numberOfBytes, err := hdr.Read(file)
-
-		if err == io.EOF {
-			return
+		numberOfBytes, hdr, err := self.getNextHeader(file)
+		if numberOfBytes == 0 {
+			break
 		}
 
 		if err != nil {
@@ -288,8 +325,8 @@ func (self *log) replayFromFileLocation(file *os.File,
 		} else {
 			_, ok = shardIdsSet[hdr.shardId]
 		}
-		if !ok || hdr.requestNumber < requestNumber {
-			_, err = file.Seek(int64(hdr.length), os.SEEK_CUR)
+		if !ok {
+			err = self.skipRequest(file, hdr)
 			if err != nil {
 				sendOrStop(newErrorReplayRequest(err), replayChan, stopChan)
 				return
