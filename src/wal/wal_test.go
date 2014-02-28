@@ -304,6 +304,26 @@ func (_ *WalSuite) TestRequestNumberRollOverAcrossMultipleFiles(c *C) {
 	c.Assert(len(requests), Equals, 20000)
 }
 
+func (_ *WalSuite) TestRequestNumberRollOverAndIndexing(c *C) {
+	wal := newWal(c)
+	firstRequestNumber := uint32(math.MaxUint32 - 5000)
+	wal.logFiles[0].state.LargestRequestNumber = firstRequestNumber
+	var i uint32
+	for i = 0; i < 20000; i++ {
+		req := generateRequest(2)
+		n, err := wal.AssignSequenceNumbersAndLog(req, &MockShard{id: 1})
+		c.Assert(err, IsNil)
+		c.Assert(n, Equals, firstRequestNumber+i+1)
+	}
+	wal.Close()
+	requests := []*protocol.Request{}
+	wal.RecoverServerFromRequestNumber(0, []uint32{1}, func(req *protocol.Request, shardId uint32) error {
+		requests = append(requests, req)
+		return nil
+	})
+	c.Assert(len(requests), Equals, 15000)
+}
+
 func (_ *WalSuite) TestRecoveryFromCrash(c *C) {
 	wal := newWal(c)
 	req := generateRequest(2)
@@ -427,10 +447,11 @@ func (_ *WalSuite) TestIndex(c *C) {
 	}
 
 	c.Assert(wal.logFiles[0].state.Index.Entries, HasLen, 3)
-	requestOffset := wal.logFiles[0].state.Index.requestOffset(2001)
+	order := NewRequestNumberOrder(0, 3000)
+	requestOffset := wal.logFiles[0].state.Index.requestOffset(order, 2001)
 	c.Assert(requestOffset > 0, Equals, true)
 	// request 2000 should be in the second block not the third block
-	c.Assert(requestOffset > wal.logFiles[0].state.Index.requestOffset(2000), Equals, true)
+	c.Assert(requestOffset > wal.logFiles[0].state.Index.requestOffset(order, 2000), Equals, true)
 }
 
 func (_ *WalSuite) TestSequenceNumberAssignment(c *C) {

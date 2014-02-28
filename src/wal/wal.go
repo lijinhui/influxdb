@@ -112,16 +112,13 @@ func (self *WAL) RecoverServerFromLastCommit(serverId uint32, shardIds []uint32,
 func (self *WAL) RecoverServerFromRequestNumber(requestNumber uint32, shardIds []uint32, yield func(request *protocol.Request, shardId uint32) error) error {
 	var firstLogFile int
 
+	state := self.logFiles[len(self.logFiles)-1].state
+	order := NewRequestNumberOrder(self.logFiles[0].firstRequestNumber(), state.LargestRequestNumber)
 outer:
-	for idx, logFile := range self.logFiles[firstLogFile:] {
-		if idx > 0 {
-			// we need to replay all requests for all log files except the
-			// first one
-			requestNumber = 0
-		}
+	for _, logFile := range self.logFiles[firstLogFile:] {
 		logger.Info("Replaying from %s", logFile.file.Name())
 		count := 0
-		ch, stopChan := logFile.replayFromRequestNumber(shardIds, requestNumber)
+		ch, stopChan := logFile.replayFromRequestNumber(shardIds, requestNumber, order)
 		for {
 			x := <-ch
 			if x == nil {

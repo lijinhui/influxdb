@@ -231,7 +231,7 @@ func (self *log) dupLogFile() (*os.File, error) {
 
 // replay requests starting at the given requestNumber and for the
 // given shard ids. Return all requests if shardIds is empty
-func (self *log) replayFromRequestNumber(shardIds []uint32, requestNumber uint32) (chan *replayRequest, chan struct{}) {
+func (self *log) replayFromRequestNumber(shardIds []uint32, requestNumber uint32, order *RequestNumberOrder) (chan *replayRequest, chan struct{}) {
 	// this channel needs to be buffered in case the last request in the
 	// log file caused an error in the yield function
 	stopChan := make(chan struct{}, 1)
@@ -245,7 +245,7 @@ func (self *log) replayFromRequestNumber(shardIds []uint32, requestNumber uint32
 			return
 		}
 		defer file.Close()
-		offset := self.state.Index.requestOffset(requestNumber)
+		offset := self.state.Index.requestOffset(order, requestNumber)
 		logger.Debug("Replaying from file offset %d", offset)
 		_, err = file.Seek(int64(offset), os.SEEK_SET)
 		if err != nil {
@@ -257,7 +257,7 @@ func (self *log) replayFromRequestNumber(shardIds []uint32, requestNumber uint32
 		for _, shardId := range shardIds {
 			shardIdsSet[shardId] = struct{}{}
 		}
-		if err := self.skipToRequest(file, requestNumber); err != nil {
+		if err := self.skipToRequest(file, requestNumber, order); err != nil {
 			sendOrStop(newErrorReplayRequest(err), replayChan, stopChan)
 			return
 		}
@@ -280,7 +280,7 @@ func (self *log) skipRequest(file *os.File, hdr *entryHeader) (err error) {
 	return
 }
 
-func (self *log) skipToRequest(file *os.File, requestNumber uint32) error {
+func (self *log) skipToRequest(file *os.File, requestNumber uint32, order *RequestNumberOrder) error {
 	for {
 		n, hdr, err := self.getNextHeader(file)
 		if n == 0 {
@@ -290,7 +290,7 @@ func (self *log) skipToRequest(file *os.File, requestNumber uint32) error {
 		if err != nil {
 			return err
 		}
-		if hdr.requestNumber < requestNumber {
+		if order.isBefore(hdr.requestNumber, requestNumber) {
 			if err := self.skipRequest(file, hdr); err != nil {
 				return err
 			}

@@ -13,13 +13,13 @@ func (self *RequestNumberOrder) isAfter(left, right uint32) bool {
 	if left == right {
 		return false
 	}
-	if left > self.firstRequestNumber && right > self.firstRequestNumber {
+	if left >= self.firstRequestNumber && right >= self.firstRequestNumber {
 		return left > right
 	}
-	if left < self.lastRequestNumber && left < self.lastRequestNumber {
+	if left <= self.lastRequestNumber && right <= self.lastRequestNumber {
 		return left > right
 	}
-	return left > self.firstRequestNumber
+	return left <= self.lastRequestNumber
 }
 
 func (self *RequestNumberOrder) isAfterOrEqual(left, right uint32) bool {
