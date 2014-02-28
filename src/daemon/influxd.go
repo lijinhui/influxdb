@@ -17,7 +17,7 @@ import (
 
 const (
 	version = "dev"
-	gitSha  = "HEAD"
+	gitSha = "127f5480c67293318187d70962c3b31163d77fc8"
 )
 
 func setupLogging(loggingLevel, logFile string) {

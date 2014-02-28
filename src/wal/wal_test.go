@@ -177,7 +177,7 @@ func (_ *WalSuite) TestAutoBookmark(c *C) {
 	bookmarkPath := path.Join(wal.config.WalDir, fmt.Sprintf("bookmark.%d", wal.nextLogFileSuffix))
 	f, err := os.Open(bookmarkPath)
 	c.Assert(err, IsNil)
-	s := &state{}
+	s := &globalState{}
 	err = s.read(f)
 	c.Assert(err, IsNil)
 	c.Assert(s.ShardLastSequenceNumber[1], Equals, uint64(4))
@@ -254,8 +254,6 @@ func (_ *WalSuite) TestReplay(c *C) {
 	c.Assert(err, IsNil)
 }
 
-// TODO: test roll over with multiple log files (this will test
-// sorting of the log files)
 func (_ *WalSuite) TestRequestNumberRollOver(c *C) {
 	wal := newWal(c)
 	firstRequestNumber := uint32(math.MaxUint32 - 10)

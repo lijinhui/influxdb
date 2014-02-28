@@ -8,15 +8,15 @@ import (
 type indexEntry struct {
 	StartRequestNumber uint32 // first request number in the block
 	Size               uint32 // number of requests in the block
-	StartOffset        uint64 // the offset of the first request
+	StartOffset        int64  // the offset of the first request
 }
 
 type index struct {
 	Entries       []*indexEntry
-	CurrentOffset uint64
+	CurrentOffset int64
 }
 
-func (self *index) addEntry(startRequestNumber, size uint32, currentOffset uint64) {
+func (self *index) addEntry(startRequestNumber, size uint32, currentOffset int64) {
 	entry := &indexEntry{
 		StartRequestNumber: startRequestNumber,
 		Size:               size,
@@ -36,7 +36,7 @@ func (self *index) findOffsetBlock(order RequestNumberOrder, requestNumber uint3
 	}
 }
 
-func (self *index) requestOffset(order RequestNumberOrder, requestNumber uint32) uint64 {
+func (self *index) requestOffset(order RequestNumberOrder, requestNumber uint32) int64 {
 	numberOfEntries := len(self.Entries)
 	if numberOfEntries == 0 {
 		logger.Info("no index entries, assuming beginning of the file")
