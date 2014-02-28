@@ -276,6 +276,34 @@ func (_ *WalSuite) TestRequestNumberRollOver(c *C) {
 	c.Assert(requests, HasLen, 20)
 }
 
+func (_ *WalSuite) TestRequestNumberRollOverAcrossMultipleFiles(c *C) {
+	wal := newWal(c)
+	firstRequestNumber := uint32(math.MaxUint32 - 5000)
+	wal.logFiles[0].state.LargestRequestNumber = firstRequestNumber
+	var i uint32
+	for i = 0; i < 20000; i++ {
+		req := generateRequest(2)
+		n, err := wal.AssignSequenceNumbersAndLog(req, &MockShard{id: 1})
+		c.Assert(err, IsNil)
+		c.Assert(n, Equals, firstRequestNumber+i+1)
+	}
+	wal.Close()
+	requests := []*protocol.Request{}
+	wal.RecoverServerFromRequestNumber(firstRequestNumber, []uint32{1}, func(req *protocol.Request, shardId uint32) error {
+		requests = append(requests, req)
+		return nil
+	})
+	c.Assert(len(requests), Equals, 20000)
+	wal, err := NewWAL(wal.config)
+	c.Assert(err, IsNil)
+	requests = []*protocol.Request{}
+	wal.RecoverServerFromRequestNumber(firstRequestNumber, []uint32{1}, func(req *protocol.Request, shardId uint32) error {
+		requests = append(requests, req)
+		return nil
+	})
+	c.Assert(len(requests), Equals, 20000)
+}
+
 func (_ *WalSuite) TestRecoveryFromCrash(c *C) {
 	wal := newWal(c)
 	req := generateRequest(2)

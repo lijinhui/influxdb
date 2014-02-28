@@ -66,8 +66,6 @@ func NewWAL(config *configuration.Configuration) (*WAL, error) {
 	}
 
 	// sort the logfiles by the first request number in the log
-	sort.Sort(sortableLogSlice(logFiles))
-
 	wal := &WAL{
 		config:             config,
 		logFiles:           logFiles,
@@ -79,6 +77,10 @@ func NewWAL(config *configuration.Configuration) (*WAL, error) {
 	// if we don't have any log files open yet, open a new one
 	if len(logFiles) == 0 {
 		_, err = wal.createNewLog()
+	} else {
+		state := logFiles[len(logFiles)-1].state
+		fmt.Printf("first: %d\n", state.FirstRequestNumber)
+		sort.Sort(sortableLogSlice{logFiles, NewRequestNumberOrder(state.FirstRequestNumber, state.LargestRequestNumber)})
 	}
 
 	go wal.processEntries()
@@ -111,7 +113,12 @@ func (self *WAL) RecoverServerFromRequestNumber(requestNumber uint32, shardIds [
 	var firstLogFile int
 
 outer:
-	for _, logFile := range self.logFiles[firstLogFile:] {
+	for idx, logFile := range self.logFiles[firstLogFile:] {
+		if idx > 0 {
+			// we need to replay all requests for all log files except the
+			// first one
+			requestNumber = 0
+		}
 		logger.Info("Replaying from %s", logFile.file.Name())
 		count := 0
 		ch, stopChan := logFile.replayFromRequestNumber(shardIds, requestNumber)
@@ -207,6 +214,7 @@ func (self *WAL) processCommitEntry(e *commitEntry) {
 		logFile.close()
 		logFile.delete()
 	}
+	lastLogFile.state.FirstRequestNumber = self.logFiles[0].firstRequestNumber()
 	e.confirmation <- &confirmation{0, nil}
 }
 
@@ -246,9 +254,9 @@ func (self *WAL) AssignSequenceNumbersAndLog(request *protocol.Request, shard Sh
 	return confirmation.requestNumber, confirmation.err
 }
 
-func (self *WAL) doesLogFileContainRequest(requestNumber uint32) func(int) bool {
+func (self *WAL) doesLogFileContainRequest(order *RequestNumberOrder, requestNumber uint32) func(int) bool {
 	return func(i int) bool {
-		if self.logFiles[i].firstRequestNumber() > requestNumber {
+		if order.isAfter(self.logFiles[i].firstRequestNumber(), requestNumber) {
 			return true
 		}
 		return false
@@ -258,12 +266,17 @@ func (self *WAL) doesLogFileContainRequest(requestNumber uint32) func(int) bool 
 // returns the first log file that contains the given request number
 func (self *WAL) firstLogFile(requestNumber uint32) int {
 	lengthLogFiles := len(self.logFiles)
-	if requestNumber >= self.logFiles[lengthLogFiles-1].firstRequestNumber() {
+
+	lastLogFile := self.logFiles[len(self.logFiles)-1]
+	firstRequestNumber := self.logFiles[0].firstRequestNumber()
+	order := NewRequestNumberOrder(firstRequestNumber, lastLogFile.state.LargestRequestNumber)
+
+	if order.isAfterOrEqual(requestNumber, lastLogFile.firstRequestNumber()) {
 		return lengthLogFiles - 1
-	} else if requestNumber <= self.logFiles[0].firstRequestNumber() {
+	} else if order.isAfterOrEqual(firstRequestNumber, requestNumber) {
 		return 0
 	}
-	return sort.Search(lengthLogFiles, self.doesLogFileContainRequest(requestNumber)) - 1
+	return sort.Search(lengthLogFiles, self.doesLogFileContainRequest(order, requestNumber)) - 1
 }
 
 func (self *WAL) shouldRotateTheLogFile() bool {
@@ -277,6 +290,7 @@ func (self *WAL) rotateTheLogFile() error {
 	}
 
 	lastLogFile := self.logFiles[len(self.logFiles)-1]
+	lastLogFile.state.FirstRequestNumber = self.logFiles[0].firstRequestNumber()
 	err := lastLogFile.forceBookmark()
 	if err != nil {
 		return err

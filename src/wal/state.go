@@ -21,6 +21,7 @@ type state struct {
 	FileOffset                int64 // the file offset at which this bookmark was created
 	Index                     *index
 	TotalNumberOfRequests     int
+	FirstRequestNumber        uint32
 	LargestRequestNumber      uint32
 	ShardLastSequenceNumber   map[uint32]uint64
 	ServerLastRequestNumber   map[uint32]uint32
@@ -64,6 +65,7 @@ func (self *state) getNextRequestNumber() uint32 {
 }
 
 func (self *state) continueFromState(state *state) {
+	self.FirstRequestNumber = state.FirstRequestNumber
 	self.LargestRequestNumber = state.LargestRequestNumber
 	self.ShardLastSequenceNumber = state.ShardLastSequenceNumber
 	self.ServerLastRequestNumber = state.ServerLastRequestNumber
