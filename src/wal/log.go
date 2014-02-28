@@ -104,6 +104,7 @@ func (self *log) recover() error {
 	if err != nil {
 		return err
 	}
+	defer bookmark.Close()
 	if err := self.state.read(bookmark); err != nil {
 		return err
 	}
