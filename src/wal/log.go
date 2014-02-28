@@ -231,7 +231,7 @@ func (self *log) dupLogFile() (*os.File, error) {
 
 // replay requests starting at the given requestNumber and for the
 // given shard ids. Return all requests if shardIds is empty
-func (self *log) replayFromRequestNumber(shardIds []uint32, requestNumber uint32, order *RequestNumberOrder) (chan *replayRequest, chan struct{}) {
+func (self *log) replayFromRequestNumber(shardIds []uint32, requestNumber uint32, order RequestNumberOrder) (chan *replayRequest, chan struct{}) {
 	// this channel needs to be buffered in case the last request in the
 	// log file caused an error in the yield function
 	stopChan := make(chan struct{}, 1)
@@ -280,7 +280,7 @@ func (self *log) skipRequest(file *os.File, hdr *entryHeader) (err error) {
 	return
 }
 
-func (self *log) skipToRequest(file *os.File, requestNumber uint32, order *RequestNumberOrder) error {
+func (self *log) skipToRequest(file *os.File, requestNumber uint32, order RequestNumberOrder) error {
 	for {
 		n, hdr, err := self.getNextHeader(file)
 		if n == 0 {

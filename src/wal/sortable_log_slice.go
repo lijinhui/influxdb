@@ -2,7 +2,7 @@ package wal
 
 type sortableLogSlice struct {
 	logFiles []*log
-	order    *RequestNumberOrder
+	order    RequestNumberOrder
 }
 
 func (self sortableLogSlice) Len() int {

@@ -26,7 +26,7 @@ func (self *index) addEntry(startRequestNumber, size uint32, currentOffset uint6
 	self.CurrentOffset = currentOffset
 }
 
-func (self *index) findOffsetBlock(order *RequestNumberOrder, requestNumber uint32) func(int) bool {
+func (self *index) findOffsetBlock(order RequestNumberOrder, requestNumber uint32) func(int) bool {
 	return func(i int) bool {
 		// The returned function must satisfy `f(i) => f(i+1)`, meaning if
 		// for index i f returns true, then it must return true for every
@@ -36,7 +36,7 @@ func (self *index) findOffsetBlock(order *RequestNumberOrder, requestNumber uint
 	}
 }
 
-func (self *index) requestOffset(order *RequestNumberOrder, requestNumber uint32) uint64 {
+func (self *index) requestOffset(order RequestNumberOrder, requestNumber uint32) uint64 {
 	numberOfEntries := len(self.Entries)
 	if numberOfEntries == 0 {
 		logger.Info("no index entries, assuming beginning of the file")

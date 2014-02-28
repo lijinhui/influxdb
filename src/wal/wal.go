@@ -79,8 +79,7 @@ func NewWAL(config *configuration.Configuration) (*WAL, error) {
 		_, err = wal.createNewLog()
 	} else {
 		state := logFiles[len(logFiles)-1].state
-		fmt.Printf("first: %d\n", state.FirstRequestNumber)
-		sort.Sort(sortableLogSlice{logFiles, NewRequestNumberOrder(state.FirstRequestNumber, state.LargestRequestNumber)})
+		sort.Sort(sortableLogSlice{logFiles, state})
 	}
 
 	go wal.processEntries()
@@ -113,12 +112,11 @@ func (self *WAL) RecoverServerFromRequestNumber(requestNumber uint32, shardIds [
 	var firstLogFile int
 
 	state := self.logFiles[len(self.logFiles)-1].state
-	order := NewRequestNumberOrder(self.logFiles[0].firstRequestNumber(), state.LargestRequestNumber)
 outer:
 	for _, logFile := range self.logFiles[firstLogFile:] {
 		logger.Info("Replaying from %s", logFile.file.Name())
 		count := 0
-		ch, stopChan := logFile.replayFromRequestNumber(shardIds, requestNumber, order)
+		ch, stopChan := logFile.replayFromRequestNumber(shardIds, requestNumber, state)
 		for {
 			x := <-ch
 			if x == nil {
@@ -251,7 +249,7 @@ func (self *WAL) AssignSequenceNumbersAndLog(request *protocol.Request, shard Sh
 	return confirmation.requestNumber, confirmation.err
 }
 
-func (self *WAL) doesLogFileContainRequest(order *RequestNumberOrder, requestNumber uint32) func(int) bool {
+func (self *WAL) doesLogFileContainRequest(order RequestNumberOrder, requestNumber uint32) func(int) bool {
 	return func(i int) bool {
 		if order.isAfter(self.logFiles[i].firstRequestNumber(), requestNumber) {
 			return true
@@ -265,15 +263,14 @@ func (self *WAL) firstLogFile(requestNumber uint32) int {
 	lengthLogFiles := len(self.logFiles)
 
 	lastLogFile := self.logFiles[len(self.logFiles)-1]
-	firstRequestNumber := self.logFiles[0].firstRequestNumber()
-	order := NewRequestNumberOrder(firstRequestNumber, lastLogFile.state.LargestRequestNumber)
+	state := lastLogFile.state
 
-	if order.isAfterOrEqual(requestNumber, lastLogFile.firstRequestNumber()) {
+	if state.isAfterOrEqual(requestNumber, lastLogFile.firstRequestNumber()) {
 		return lengthLogFiles - 1
-	} else if order.isAfterOrEqual(firstRequestNumber, requestNumber) {
+	} else if state.isAfterOrEqual(self.logFiles[0].firstRequestNumber(), requestNumber) {
 		return 0
 	}
-	return sort.Search(lengthLogFiles, self.doesLogFileContainRequest(order, requestNumber)) - 1
+	return sort.Search(lengthLogFiles, self.doesLogFileContainRequest(state, requestNumber)) - 1
 }
 
 func (self *WAL) shouldRotateTheLogFile() bool {

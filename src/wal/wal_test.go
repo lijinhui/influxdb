@@ -447,11 +447,11 @@ func (_ *WalSuite) TestIndex(c *C) {
 	}
 
 	c.Assert(wal.logFiles[0].state.Index.Entries, HasLen, 3)
-	order := NewRequestNumberOrder(0, 3000)
-	requestOffset := wal.logFiles[0].state.Index.requestOffset(order, 2001)
+	state := wal.logFiles[len(wal.logFiles)-1].state
+	requestOffset := wal.logFiles[0].state.Index.requestOffset(state, 2001)
 	c.Assert(requestOffset > 0, Equals, true)
 	// request 2000 should be in the second block not the third block
-	c.Assert(requestOffset > wal.logFiles[0].state.Index.requestOffset(order, 2000), Equals, true)
+	c.Assert(requestOffset > wal.logFiles[0].state.Index.requestOffset(state, 2000), Equals, true)
 }
 
 func (_ *WalSuite) TestSequenceNumberAssignment(c *C) {

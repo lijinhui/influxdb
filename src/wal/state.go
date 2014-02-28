@@ -27,6 +27,31 @@ type state struct {
 	ServerLastRequestNumber   map[uint32]uint32
 }
 
+func (self *state) isAfter(left, right uint32) bool {
+	if left == right {
+		return false
+	}
+	if left >= self.FirstRequestNumber && right >= self.FirstRequestNumber {
+		return left > right
+	}
+	if left <= self.LargestRequestNumber && right <= self.LargestRequestNumber {
+		return left > right
+	}
+	return left <= self.LargestRequestNumber
+}
+
+func (self *state) isAfterOrEqual(left, right uint32) bool {
+	return left == right || self.isAfter(left, right)
+}
+
+func (self *state) isBefore(left, right uint32) bool {
+	return !self.isAfterOrEqual(left, right)
+}
+
+func (self *state) isBeforeOrEqual(left, right uint32) bool {
+	return !self.isAfter(left, right)
+}
+
 func newState() *state {
 	return &state{
 		Version: CURRENT_VERSION,
