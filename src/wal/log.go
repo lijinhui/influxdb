@@ -69,7 +69,7 @@ func (self *log) internalFlush() error {
 }
 
 func (self *log) requestsSinceLastBookmark() int {
-	return self.state.RequestsSinceLastBookmark
+	return self.state.TotalNumberOfRequests
 }
 
 // this is for testing only
@@ -81,8 +81,6 @@ func (self *log) close() error {
 	if self.closed {
 		return nil
 	}
-	self.forceIndex()
-	self.forceBookmark()
 	self.internalFlush()
 	return self.file.Close()
 }
@@ -108,9 +106,6 @@ func (self *log) recover() error {
 	if err := self.state.read(bookmark); err != nil {
 		return err
 	}
-
-	self.state.RequestsSinceLastBookmark = 0
-	self.state.RequestsSinceLastIndex = 0
 
 	logger.Debug("Recovering from previous state from file offset: %d", self.state.FileOffset)
 
@@ -138,7 +133,6 @@ func (self *log) recover() error {
 		}
 
 		self.state.recover(x)
-		self.conditionalBookmarkAndIndex()
 	}
 
 	info, err := self.file.Stat()
@@ -152,43 +146,6 @@ func (self *log) recover() error {
 
 func (self *log) setServerId(serverId uint32) {
 	self.serverId = uint64(serverId)
-}
-
-func (self *log) assignSequenceNumbers(shardId uint32, request *protocol.Request) {
-	if request.Series == nil {
-		return
-	}
-	sequenceNumber := self.state.getCurrentSequenceNumber(shardId)
-	for _, p := range request.Series.Points {
-		if p.SequenceNumber != nil {
-			continue
-		}
-		sequenceNumber++
-		p.SequenceNumber = proto.Uint64(sequenceNumber*HOST_ID_OFFSET + self.serverId)
-	}
-	self.state.setCurrentSequenceNumber(shardId, sequenceNumber)
-}
-
-func (self *log) conditionalBookmarkAndIndex() {
-	self.state.TotalNumberOfRequests++
-
-	shouldFlush := false
-	self.state.RequestsSinceLastIndex++
-	if self.state.RequestsSinceLastIndex >= uint32(self.config.WalIndexAfterRequests) {
-		shouldFlush = true
-		self.forceIndex()
-	}
-
-	self.state.RequestsSinceLastBookmark++
-	if self.state.RequestsSinceLastBookmark >= self.config.WalBookmarkAfterRequests {
-		shouldFlush = true
-		self.forceBookmark()
-	}
-
-	self.requestsSinceLastFlush++
-	if self.requestsSinceLastFlush > self.config.WalFlushAfterRequests || shouldFlush {
-		self.internalFlush()
-	}
 }
 
 func (self *log) appendRequest(request *protocol.Request, shardId uint32) (uint32, error) {
@@ -221,7 +178,6 @@ func (self *log) appendRequest(request *protocol.Request, shardId uint32) (uint3
 		return 0, err
 	}
 	self.fileSize += uint64(writtenHdrBytes + written)
-	self.conditionalBookmarkAndIndex()
 	return requestNumber, nil
 }
 
@@ -387,49 +343,4 @@ func sendOrStop(req *replayRequest, replayChan chan *replayRequest, stopChan cha
 		return ok
 	}
 	return false
-}
-
-func (self *log) forceBookmark() error {
-	logger.Debug("Creating bookmark at file offset %d", self.fileSize)
-	dir := filepath.Dir(self.file.Name())
-	bookmarkPath := filepath.Join(dir, fmt.Sprintf("bookmark.%d.new", self.suffix()))
-	bookmarkFile, err := os.OpenFile(bookmarkPath, os.O_TRUNC|os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	defer bookmarkFile.Close()
-	self.state.setFileOffset(int64(self.fileSize))
-	if err := self.state.write(bookmarkFile); err != nil {
-		return err
-	}
-	if err := bookmarkFile.Close(); err != nil {
-		return err
-	}
-	err = os.Rename(bookmarkPath, filepath.Join(dir, fmt.Sprintf("bookmark.%d", self.suffix())))
-	if err != nil {
-		return err
-	}
-	self.state.RequestsSinceLastBookmark = 0
-	return nil
-}
-
-func (self *log) forceIndex() error {
-	// don't do anything if the number of requests writtern since the
-	// last index update is 0
-	if self.state.RequestsSinceLastIndex == 0 {
-		return nil
-	}
-
-	startRequestNumber := self.state.LargestRequestNumber - uint32(self.state.RequestsSinceLastIndex) + 1
-	logger.Debug("Creating new index entry [%d,%d]", startRequestNumber, self.state.RequestsSinceLastIndex)
-	self.state.Index.addEntry(startRequestNumber, self.state.RequestsSinceLastIndex, self.fileSize)
-	self.state.RequestsSinceLastIndex = 0
-	return nil
-}
-
-func (self *log) delete() {
-	filePath := path.Join(self.config.WalDir, fmt.Sprintf("bookmark.%d", self.suffix()))
-	os.Remove(filePath)
-	filePath = path.Join(self.config.WalDir, fmt.Sprintf("log.%d", self.suffix()))
-	os.Remove(filePath)
 }

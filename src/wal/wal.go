@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"code.google.com/p/goprotobuf/proto"
 	logger "code.google.com/p/log4go"
 	"configuration"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 )
 
 type WAL struct {
+	state              *GlobalState
 	config             *configuration.Configuration
 	logFiles           []*log
 	serverId           uint32
@@ -65,12 +67,15 @@ func NewWAL(config *configuration.Configuration) (*WAL, error) {
 		logFiles = append(logFiles, logFile)
 	}
 
+	// TODO: recover state from file
+	state := &GlobalState{}
 	// sort the logfiles by the first request number in the log
 	wal := &WAL{
 		config:             config,
 		logFiles:           logFiles,
 		requestsPerLogFile: config.WalRequestsPerLogFile,
 		nextLogFileSuffix:  nextLogFileSuffix,
+		state:              state,
 		entries:            make(chan interface{}, 10),
 	}
 
@@ -78,7 +83,6 @@ func NewWAL(config *configuration.Configuration) (*WAL, error) {
 	if len(logFiles) == 0 {
 		_, err = wal.createNewLog()
 	} else {
-		state := logFiles[len(logFiles)-1].state
 		sort.Sort(sortableLogSlice{logFiles, state})
 	}
 
@@ -104,7 +108,7 @@ func (self *WAL) Commit(requestNumber uint32, serverId uint32) error {
 
 func (self *WAL) RecoverServerFromLastCommit(serverId uint32, shardIds []uint32, yield func(request *protocol.Request, shardId uint32) error) error {
 	lastLogFile := self.logFiles[len(self.logFiles)-1]
-	requestNumber := lastLogFile.state.ServerLastRequestNumber[serverId]
+	requestNumber := self.state.ServerLastRequestNumber[serverId]
 	return self.RecoverServerFromRequestNumber(requestNumber, shardIds, yield)
 }
 
@@ -114,12 +118,11 @@ func (self *WAL) RecoverServerFromLastCommit(serverId uint32, shardIds []uint32,
 func (self *WAL) RecoverServerFromRequestNumber(requestNumber uint32, shardIds []uint32, yield func(request *protocol.Request, shardId uint32) error) error {
 	var firstLogFile int
 
-	state := self.logFiles[len(self.logFiles)-1].state
 outer:
 	for _, logFile := range self.logFiles[firstLogFile:] {
 		logger.Info("Replaying from %s", logFile.file.Name())
 		count := 0
-		ch, stopChan := logFile.replayFromRequestNumber(shardIds, requestNumber, state)
+		ch, stopChan := logFile.replayFromRequestNumber(shardIds, requestNumber, self.state)
 		for {
 			x := <-ch
 			if x == nil {
@@ -178,6 +181,21 @@ func (self *WAL) processEntries() {
 	}
 }
 
+func (self *WAL) assignSequenceNumbersAndRequestNumber(shardId uint32, request *protocol.Request) {
+	if request.Series == nil {
+		return
+	}
+	sequenceNumber := self.state.getCurrentSequenceNumber(shardId)
+	for _, p := range request.Series.Points {
+		if p.SequenceNumber != nil {
+			continue
+		}
+		sequenceNumber++
+		p.SequenceNumber = proto.Uint64(sequenceNumber*HOST_ID_OFFSET + self.serverId)
+	}
+	self.state.setCurrentSequenceNumber(shardId, sequenceNumber)
+}
+
 func (self *WAL) processAppendEntry(e *appendEntry) {
 	if self.shouldRotateTheLogFile() {
 		if err := self.rotateTheLogFile(); err != nil {
@@ -187,6 +205,8 @@ func (self *WAL) processAppendEntry(e *appendEntry) {
 	}
 
 	lastLogFile := self.logFiles[len(self.logFiles)-1]
+	self.assignSequenceNumbersAndRequestNumber(e.shardId, e.request)
+
 	requestNumber, err := lastLogFile.appendRequest(e.request, e.shardId)
 	if err != nil {
 		e.confirmation <- &confirmation{0, err}
@@ -197,8 +217,8 @@ func (self *WAL) processAppendEntry(e *appendEntry) {
 
 func (self *WAL) processCommitEntry(e *commitEntry) {
 	lastLogFile := self.logFiles[len(self.logFiles)-1]
-	lastLogFile.state.commitRequestNumber(e.serverId, e.requestNumber)
-	lowestCommitedRequestNumber := lastLogFile.state.LowestCommitedRequestNumber()
+	self.state.commitRequestNumber(e.serverId, e.requestNumber)
+	lowestCommitedRequestNumber := self.state.LowestCommitedRequestNumber()
 
 	index := self.firstLogFile(lowestCommitedRequestNumber)
 	if index == 0 {
@@ -212,7 +232,7 @@ func (self *WAL) processCommitEntry(e *commitEntry) {
 		logFile.close()
 		logFile.delete()
 	}
-	lastLogFile.state.FirstRequestNumber = self.logFiles[0].firstRequestNumber()
+	self.state.FirstRequestNumber = self.logFiles[0].firstRequestNumber()
 	e.confirmation <- &confirmation{0, nil}
 }
 
@@ -238,7 +258,6 @@ func (self *WAL) createNewLog() (*log, error) {
 		lastLogFile := self.logFiles[len(self.logFiles)-1]
 		// update the new state to continue from where the last log file
 		// left off
-		log.state.continueFromState(lastLogFile.state)
 	}
 	self.logFiles = append(self.logFiles, log)
 	return log, nil
@@ -267,7 +286,7 @@ func (self *WAL) firstLogFile(requestNumber uint32) int {
 	lengthLogFiles := len(self.logFiles)
 
 	lastLogFile := self.logFiles[len(self.logFiles)-1]
-	state := lastLogFile.state
+	state := self.state
 
 	if state.isAfterOrEqual(requestNumber, lastLogFile.firstRequestNumber()) {
 		return lengthLogFiles - 1
@@ -288,7 +307,7 @@ func (self *WAL) rotateTheLogFile() error {
 	}
 
 	lastLogFile := self.logFiles[len(self.logFiles)-1]
-	lastLogFile.state.FirstRequestNumber = self.logFiles[0].firstRequestNumber()
+	self.state.FirstRequestNumber = self.logFiles[0].firstRequestNumber()
 	err := lastLogFile.forceBookmark()
 	if err != nil {
 		return err
@@ -299,4 +318,75 @@ func (self *WAL) rotateTheLogFile() error {
 	}
 	logger.Info("Rotating log. New log file %s", lastLogFile.file.Name())
 	return nil
+}
+
+// TODO: fix the following methods
+
+func (self *WAL) conditionalBookmarkAndIndex() {
+	lastLogFile := self.logFiles[len(self.logFiles)-1]
+
+	lastLogFile.state.TotalNumberOfRequests++
+
+	shouldFlush := false
+	self.state.RequestsSinceLastIndex++
+	if self.state.RequestsSinceLastIndex >= uint32(self.config.WalIndexAfterRequests) {
+		shouldFlush = true
+		self.forceIndex()
+	}
+
+	self.state.RequestsSinceLastBookmark++
+	if self.state.RequestsSinceLastBookmark >= self.config.WalBookmarkAfterRequests {
+		shouldFlush = true
+		self.forceBookmark()
+	}
+
+	self.requestsSinceLastFlush++
+	if self.requestsSinceLastFlush > self.config.WalFlushAfterRequests || shouldFlush {
+		self.internalFlush()
+	}
+}
+
+func (self *log) forceBookmark() error {
+	logger.Debug("Creating bookmark at file offset %d", self.fileSize)
+	dir := filepath.Dir(self.file.Name())
+	bookmarkPath := filepath.Join(dir, fmt.Sprintf("bookmark.%d.new", self.suffix()))
+	bookmarkFile, err := os.OpenFile(bookmarkPath, os.O_TRUNC|os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer bookmarkFile.Close()
+	self.state.setFileOffset(int64(self.fileSize))
+	if err := self.state.write(bookmarkFile); err != nil {
+		return err
+	}
+	if err := bookmarkFile.Close(); err != nil {
+		return err
+	}
+	err = os.Rename(bookmarkPath, filepath.Join(dir, fmt.Sprintf("bookmark.%d", self.suffix())))
+	if err != nil {
+		return err
+	}
+	self.state.RequestsSinceLastBookmark = 0
+	return nil
+}
+
+func (self *log) forceIndex() error {
+	// don't do anything if the number of requests writtern since the
+	// last index update is 0
+	if self.state.RequestsSinceLastIndex == 0 {
+		return nil
+	}
+
+	startRequestNumber := self.state.LargestRequestNumber - uint32(self.state.RequestsSinceLastIndex) + 1
+	logger.Debug("Creating new index entry [%d,%d]", startRequestNumber, self.state.RequestsSinceLastIndex)
+	self.state.Index.addEntry(startRequestNumber, self.state.RequestsSinceLastIndex, self.fileSize)
+	self.state.RequestsSinceLastIndex = 0
+	return nil
+}
+
+func (self *log) delete() {
+	filePath := path.Join(self.config.WalDir, fmt.Sprintf("bookmark.%d", self.suffix()))
+	os.Remove(filePath)
+	filePath = path.Join(self.config.WalDir, fmt.Sprintf("log.%d", self.suffix()))
+	os.Remove(filePath)
 }
