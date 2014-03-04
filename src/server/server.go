@@ -103,11 +103,17 @@ func (self *Server) Stop() {
 		return
 	}
 	self.stopped = true
-	self.RaftServer.Close()
+	log.Info("Closing HTTP API")
 	self.HttpApi.Close()
+	log.Info("Closing Raft Server")
+	self.RaftServer.Close()
+	log.Info("Closing Protobuf Server")
 	self.ProtobufServer.Close()
+	log.Info("Closing Admin Server")
 	self.AdminServer.Close()
+	log.Info("Closing WAL")
 	self.writeLog.Close()
+	log.Info("Closing Shard Store")
 	self.shardStore.Close()
 	// TODO: close admin server and protobuf client connections
 	log.Info("Stopping server")
