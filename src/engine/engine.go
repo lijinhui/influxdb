@@ -152,6 +152,7 @@ func (self *QueryEngine) YieldSeries(seriesName *string, fieldNames []string, se
 	if self.explain {
 		self.pointsRead += int64(len(seriesIncoming.Points))
 	}
+	self.seriesToPoints[*seriesName] = &protocol.Series{Name: seriesName, Fields: fieldNames}
 	return self.yieldSeriesData(seriesIncoming)
 }
 
