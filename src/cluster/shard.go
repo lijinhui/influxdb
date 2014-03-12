@@ -217,6 +217,7 @@ func (self *ShardData) Query(querySpec *parser.QuerySpec, response chan *p.Respo
 			processor = engine.NewPassthroughEngine(response, maxDeleteResults)
 		} else {
 			if self.ShouldAggregateLocally(querySpec) {
+				fmt.Printf("creating a query engine\n")
 				processor, err = engine.NewQueryEngine(querySpec.SelectQuery(), response)
 				if err != nil {
 					response <- &p.Response{Type: &endStreamResponse, ErrorMessage: p.String(err.Error())}
@@ -226,6 +227,7 @@ func (self *ShardData) Query(querySpec *parser.QuerySpec, response chan *p.Respo
 				processor.SetShardInfo(int(self.Id()), self.IsLocal)
 			} else {
 				maxPointsToBufferBeforeSending := 1000
+				fmt.Printf("creating a passthrough engine\n")
 				processor = engine.NewPassthroughEngine(response, maxPointsToBufferBeforeSending)
 			}
 		}
